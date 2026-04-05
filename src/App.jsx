@@ -1,120 +1,203 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { startTransition, useDeferredValue, useEffect, useState } from 'react'
 import './App.css'
+import {
+  buildFeedUrl,
+  fetchFeedXml,
+  filterStories,
+  formatDate,
+  parseHnFeed,
+  readInitialFilters,
+  writeFiltersToLocation,
+} from './lib/hn'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [form, setForm] = useState(() => readInitialFilters())
+  const [requestFilters, setRequestFilters] = useState(() => {
+    const initialFilters = readInitialFilters()
+    return { count: initialFilters.count, points: initialFilters.points }
+  })
+  const [feed, setFeed] = useState({
+    lastBuildDate: '',
+    stories: [],
+    title: 'Hacker News: Newest',
+  })
+  const [status, setStatus] = useState('loading')
+  const [error, setError] = useState('')
+  const deferredKeyword = useDeferredValue(form.keyword)
+
+  useEffect(() => {
+    writeFiltersToLocation({
+      count: requestFilters.count,
+      keyword: form.keyword,
+      points: requestFilters.points,
+    })
+  }, [form.keyword, requestFilters])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadFeed() {
+      setStatus('loading')
+      setError('')
+
+      try {
+        const xml = await fetchFeedXml(buildFeedUrl(requestFilters))
+        const nextFeed = parseHnFeed(xml)
+
+        if (cancelled) {
+          return
+        }
+
+        startTransition(() => {
+          setFeed(nextFeed)
+        })
+        setStatus('success')
+      } catch (loadError) {
+        if (cancelled) {
+          return
+        }
+
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Unable to load the Hacker News feed.',
+        )
+        setStatus('error')
+      }
+    }
+
+    void loadFeed()
+
+    return () => {
+      cancelled = true
+    }
+  }, [requestFilters])
+
+  const visibleStories = filterStories(feed.stories, deferredKeyword)
+
+  function handleInputChange(event) {
+    const { name, value } = event.target
+    setForm((currentForm) => ({ ...currentForm, [name]: value }))
+  }
+
+  function handleSubmit(event) {
+    event.preventDefault()
+    setRequestFilters({ count: form.count, points: form.points })
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
+    <main className="page-shell">
+      <section className="hero-card">
+        <div className="hero-copy">
+          <p className="eyebrow">React 19 + Vite + concurrent filtering</p>
+          <h1>Turn the Hacker News RSS firehose into a client-side command deck.</h1>
+          <p className="intro">
+            The form refreshes <code>https://hnrss.org/newest</code>, the feed
+            update is wrapped in <code>startTransition</code>, and the keyword
+            search stays responsive via <code>useDeferredValue</code>.
           </p>
+
+          <div className="stats">
+            <div className="stat-card">
+              <span>Last build date</span>
+              <strong>{formatDate(feed.lastBuildDate)}</strong>
+            </div>
+            <div className="stat-card">
+              <span>Fetched</span>
+              <strong>{feed.stories.length} stories</strong>
+            </div>
+            <div className="stat-card">
+              <span>Status</span>
+              <strong>
+                {status === 'loading'
+                  ? 'Refreshing feed'
+                  : `${visibleStories.length} stories visible`}
+              </strong>
+            </div>
+          </div>
         </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
+
+        <form className="control-panel" onSubmit={handleSubmit}>
+          <label>
+            <span>Minimum points</span>
+            <select name="points" value={form.points} onChange={handleInputChange}>
+              <option value="1">1+</option>
+              <option value="20">20+</option>
+              <option value="50">50+</option>
+              <option value="100">100+</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Story count</span>
+            <select name="count" value={form.count} onChange={handleInputChange}>
+              <option value="6">6 stories</option>
+              <option value="12">12 stories</option>
+              <option value="18">18 stories</option>
+              <option value="24">24 stories</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Keyword</span>
+            <input
+              name="keyword"
+              type="search"
+              value={form.keyword}
+              onChange={handleInputChange}
+              placeholder="Search title, author, or domain"
+            />
+          </label>
+
+          <button type="submit" disabled={status === 'loading'}>
+            {status === 'loading' ? 'Refreshing…' : 'Refresh feed'}
+          </button>
+        </form>
       </section>
 
-      <div className="ticks"></div>
+      {error ? <p className="feedback error">{error}</p> : null}
+      {!error && status === 'loading' ? (
+        <p className="feedback">Loading the newest stories from Hacker News.</p>
+      ) : null}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
+      <section className="story-grid">
+        {visibleStories.map((story) => (
+          <article key={story.id} className="story-card">
+            <div className="badges">
+              <span>{story.points} pts</span>
+              <span>{story.commentCount} comments</span>
+              <span>{story.domain}</span>
+            </div>
+
+            <div className="story-body">
+              <h2>
+                <a href={story.link} target="_blank" rel="noreferrer">
+                  {story.title}
+                </a>
+              </h2>
+              <p>
+                Posted by <strong>{story.author}</strong> ·{' '}
+                {formatDate(story.publishedAt)}
+              </p>
+            </div>
+
+            <div className="story-footer">
+              <a href={story.commentsUrl} target="_blank" rel="noreferrer">
+                HN discussion
               </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
+              <span>#{story.id}</span>
+            </div>
+          </article>
+        ))}
       </section>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      {visibleStories.length === 0 ? (
+        <section className="empty-state">
+          No stories matched the current filters. Lower the threshold or clear
+          the keyword and try again.
+        </section>
+      ) : null}
+    </main>
   )
 }
 
