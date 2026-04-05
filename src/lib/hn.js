@@ -1,4 +1,4 @@
-const FEED_BASE_URL = 'https://hnrss.org/newest'
+const API_BASE_URL = 'https://hn.algolia.com/api/v1/search_by_date'
 
 export function readInitialFilters() {
   if (typeof window === 'undefined') {
@@ -32,29 +32,27 @@ export function writeFiltersToLocation(filters) {
 }
 
 export function buildFeedUrl(filters) {
-  const url = new URL(FEED_BASE_URL)
-  url.searchParams.set('count', filters.count)
-  url.searchParams.set('points', filters.points)
+  const url = new URL(API_BASE_URL)
+  url.searchParams.set('tags', 'story')
+  url.searchParams.set('hitsPerPage', filters.count)
+  url.searchParams.set('numericFilters', `points>=${filters.points}`)
   return url.toString()
 }
 
-export async function fetchFeedXml(url) {
-  try {
-    return await requestText(url)
-  } catch {
-    return requestText(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`)
+export async function fetchFeed(url) {
+  const response = await fetch(url, {
+    headers: { accept: 'application/json' },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Feed request failed with ${response.status}`)
   }
-}
 
-export function parseHnFeed(xml) {
-  const parser = new DOMParser()
-  const documentNode = parser.parseFromString(xml, 'application/xml')
-  const items = Array.from(documentNode.querySelectorAll('item'))
-
+  const payload = await response.json()
   return {
-    lastBuildDate: getText(documentNode, 'lastBuildDate'),
-    stories: items.map((item) => parseStory(item)),
-    title: getText(documentNode, 'channel > title') || 'Hacker News: Newest',
+    lastBuildDate: new Date().toISOString(),
+    stories: (payload.hits ?? []).map((item) => parseStory(item)),
+    title: 'Hacker News: Newest',
   }
 }
 
@@ -83,48 +81,21 @@ export function formatDate(dateString) {
   }).format(new Date(dateString))
 }
 
-async function requestText(url) {
-  const response = await fetch(url, {
-    headers: { accept: 'application/rss+xml, application/xml, text/xml' },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Feed request failed with ${response.status}`)
-  }
-
-  return response.text()
-}
-
 function parseStory(item) {
-  const description = getText(item, 'description')
-  const commentsUrl = getText(item, 'comments')
-  const link = getText(item, 'link')
+  const storyUrl = item.url || `https://news.ycombinator.com/item?id=${item.objectID}`
+  const commentsUrl = `https://news.ycombinator.com/item?id=${item.objectID}`
 
   return {
-    author: getNamespacedText(item, 'creator') || 'unknown',
+    author: item.author || 'unknown',
     commentsUrl,
-    commentCount: extractMetric(description, '# Comments'),
-    domain: extractDomain(link),
-    id: extractStoryId(commentsUrl),
-    link,
-    points: extractMetric(description, 'Points'),
-    publishedAt: getText(item, 'pubDate'),
-    title: getText(item, 'title'),
+    commentCount: Number(item.num_comments ?? 0),
+    domain: extractDomain(storyUrl),
+    id: String(item.objectID ?? item.story_id ?? commentsUrl),
+    link: storyUrl,
+    points: Number(item.points ?? 0),
+    publishedAt: item.created_at || '',
+    title: item.title || item.story_title || 'Untitled Hacker News story',
   }
-}
-
-function getText(root, selector) {
-  return root.querySelector(selector)?.textContent?.trim() ?? ''
-}
-
-function getNamespacedText(root, localName) {
-  const node = Array.from(root.children).find((element) => element.localName === localName)
-  return node?.textContent?.trim() ?? ''
-}
-
-function extractMetric(description, label) {
-  const match = description.match(new RegExp(`${label}:\\s*(\\d+)`, 'i'))
-  return Number(match?.[1] ?? 0)
 }
 
 function extractDomain(link) {
@@ -133,11 +104,6 @@ function extractDomain(link) {
   } catch {
     return 'news.ycombinator.com'
   }
-}
-
-function extractStoryId(commentsUrl) {
-  const match = commentsUrl.match(/item\?id=(\d+)/)
-  return match?.[1] ?? commentsUrl
 }
 
 function normalizeChoice(value, fallback) {

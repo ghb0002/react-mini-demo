@@ -2,10 +2,9 @@ import { startTransition, useDeferredValue, useEffect, useState } from 'react'
 import './App.css'
 import {
   buildFeedUrl,
-  fetchFeedXml,
+  fetchFeed,
   filterStories,
   formatDate,
-  parseHnFeed,
   readInitialFilters,
   writeFiltersToLocation,
 } from './lib/hn'
@@ -41,8 +40,7 @@ function App() {
       setError('')
 
       try {
-        const xml = await fetchFeedXml(buildFeedUrl(requestFilters))
-        const nextFeed = parseHnFeed(xml)
+        const nextFeed = await fetchFeed(buildFeedUrl(requestFilters))
 
         if (cancelled) {
           return
@@ -90,16 +88,17 @@ function App() {
       <section className="hero-card">
         <div className="hero-copy">
           <p className="eyebrow">React 19 + Vite + concurrent filtering</p>
-          <h1>Turn the Hacker News RSS firehose into a client-side command deck.</h1>
+          <h1>Turn the Hacker News newest stream into a client-side command deck.</h1>
           <p className="intro">
-            The form refreshes <code>https://hnrss.org/newest</code>, the feed
-            update is wrapped in <code>startTransition</code>, and the keyword
-            search stays responsive via <code>useDeferredValue</code>.
+            This version talks directly to <code>hn.algolia.com/api/v1/search_by_date</code>,
+            which sends browser-safe CORS headers. Feed refreshes are wrapped in{' '}
+            <code>startTransition</code>, and keyword filtering stays responsive via{' '}
+            <code>useDeferredValue</code>.
           </p>
 
           <div className="stats">
             <div className="stat-card">
-              <span>Last build date</span>
+              <span>Fetched at</span>
               <strong>{formatDate(feed.lastBuildDate)}</strong>
             </div>
             <div className="stat-card">
